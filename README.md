@@ -7,6 +7,31 @@ inside an unpacked extension.
 
 ---
 
+## Setting this up for someone else (do this once)
+
+```
+cd ~/Documents/Code/WCC-launcher
+python3 event-setup.py --install
+```
+
+That creates, in this folder:
+
+- **1 — SET UP EVENT** — builds a whole new event
+- **2 — REFRESH ROOMS** — just loads new sessions onto an already-set-up machine
+- **DROP CSV HERE/** — where the operator puts the CSV
+
+Hand over the folder. From then on the operator never opens Terminal:
+
+1. Put this event's CSV in **DROP CSV HERE**
+2. Double-click **1 — SET UP EVENT** (it asks for the Adobe Connect link), or
+   **2 — REFRESH ROOMS** if the machine is already set up
+3. Done — `Documents/WordlyRooms` opens with the room launchers
+
+If there's no CSV in the folder, it says so rather than failing silently. The
+most recently added CSV is the one used.
+
+---
+
 ## One-time setup, once per machine
 
 Chrome no longer lets a script install an extension, so each profile needs it

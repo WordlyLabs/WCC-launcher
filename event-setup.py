@@ -24,7 +24,7 @@ Usage:
   python3 event-setup.py rooms.csv --ac-url "https://..." --ext ~/Code/wordly-chrome-capture
 """
 
-import argparse, csv, html, json, os, re, shutil, stat, subprocess, sys
+import argparse, csv, html, json, os, re, shutil, stat, subprocess, sys, tempfile
 from pathlib import Path
 
 FIELD_ALIASES = {
@@ -71,6 +71,82 @@ def write_exec(path: Path, text: str):
 def sh_quote(p):
     """Wrap a path in single quotes for safe use inside a shell command."""
     return "'" + str(p).replace("'", "'\\''") + "'"
+
+def make_app_from_applescript(app_path: Path, applescript: str) -> bool:
+    """Compile AppleScript source into a double-clickable .app."""
+    if app_path.exists():
+        shutil.rmtree(app_path, ignore_errors=True)
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td) / "src.applescript"
+        tmp.write_text(applescript, encoding="utf-8")
+        try:
+            r = subprocess.run(["osacompile", "-o", str(app_path), str(tmp)],
+                               capture_output=True, text=True)
+            return r.returncode == 0
+        except FileNotFoundError:
+            return False
+
+def install_launchers(here: Path, out_dir: Path) -> None:
+    """Create the two operator-facing apps plus the CSV drop folder."""
+    drop = here / "DROP CSV HERE"
+    drop.mkdir(exist_ok=True)
+    (drop / "README.txt").write_text(
+        "Put this event's CSV in this folder, then go back up one level and\n"
+        "double-click SET UP EVENT (new event) or REFRESH ROOMS (same machine,\n"
+        "new sessions).\n\nThe most recently added CSV is the one that gets used.\n",
+        encoding="utf-8")
+
+    script = here / "event-setup.py"
+
+    common_find_csv = f'''
+set dropFolder to "{drop}"
+set csvPath to ""
+try
+    set csvPath to do shell script "ls -t " & quoted form of dropFolder & "/*.csv 2>/dev/null | head -1"
+end try
+if csvPath is "" then
+    display dialog "No CSV found." & return & return & "Put this event's CSV in the \\"DROP CSV HERE\\" folder, then try again." buttons {{"OK"}} default button 1 with icon stop
+    return
+end if
+'''
+
+    setup_script = common_find_csv + f'''
+set acURL to ""
+try
+    set acURL to text returned of (display dialog "Adobe Connect link for this event:" & return & "(leave blank if there isn't one)" default answer "" buttons {{"Cancel", "Build event"}} default button 2)
+on error
+    return
+end try
+
+try
+    do shell script "/usr/bin/python3 " & quoted form of "{script}" & " " & quoted form of csvPath & " --ac-url " & quoted form of acURL
+    display dialog "Event is ready." & return & return & "Open Documents > WordlyRooms and double-click START EVENT." buttons {{"OK"}} default button 1
+    do shell script "open " & quoted form of "{out_dir}"
+on error errMsg
+    display dialog "Something went wrong:" & return & return & errMsg buttons {{"OK"}} default button 1 with icon stop
+end try
+'''
+
+    refresh_script = common_find_csv + f'''
+try
+    do shell script "/usr/bin/python3 " & quoted form of "{script}" & " " & quoted form of csvPath & " --rooms-only"
+    display dialog "Room list updated." & return & return & "Open each room and pick it from the Room list in the Wordly extension." buttons {{"OK"}} default button 1
+on error errMsg
+    display dialog "Something went wrong:" & return & return & errMsg buttons {{"OK"}} default button 1 with icon stop
+end try
+'''
+
+    ok1 = make_app_from_applescript(here / "1 — SET UP EVENT.app", setup_script)
+    ok2 = make_app_from_applescript(here / "2 — REFRESH ROOMS.app", refresh_script)
+
+    if ok1 and ok2:
+        print("Created:")
+        print(f"  {here}/1 — SET UP EVENT.app")
+        print(f"  {here}/2 — REFRESH ROOMS.app")
+        print(f"  {drop}/")
+        print("\nHand over this folder. Operators drop a CSV in, then double-click.")
+    else:
+        print("ERROR: couldn't build the apps (osacompile unavailable).")
 
 def make_app(app_path: Path, script_path: Path) -> bool:
     """Build a tiny .app that runs the given shell script. Double-clicking an app
@@ -232,6 +308,10 @@ def main():
                     help="Create N blank room profiles and nothing else. Run this "
                          "once on a machine, install the extension in each, and "
                          "every future event then needs no setup at all.")
+    ap.add_argument("--install", action="store_true",
+                    help="Create the double-click apps (SET UP EVENT / REFRESH "
+                         "ROOMS) and a DROP CSV HERE folder, so operators never "
+                         "need Terminal. Run this once.")
     ap.add_argument("--rooms-only", action="store_true",
                     help="Only refresh the room list inside the extension from the "
                          "CSV. Touches nothing else — no profiles, launchers or "
@@ -244,8 +324,13 @@ def main():
                     help="Where to build the event folder")
     a = ap.parse_args()
 
+    if a.install:
+        install_launchers(Path(__file__).resolve().parent, Path(a.out).expanduser())
+        return
+
     if not a.seed and not a.csv:
-        sys.exit("ERROR: give a CSV, or use --seed N to create blank room profiles.")
+        sys.exit("ERROR: give a CSV, use --seed N for blank profiles, "
+                 "or --install to create the double-click apps.")
     if a.csv:
         csv_path = Path(a.csv).expanduser()
         if not csv_path.exists():
